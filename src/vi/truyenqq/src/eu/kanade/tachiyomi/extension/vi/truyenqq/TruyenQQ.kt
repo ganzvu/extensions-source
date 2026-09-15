@@ -45,19 +45,17 @@ abstract class TruyenQQ : KeiSource() {
     // ============================== Popular ===============================
 
     override suspend fun getPopularManga(page: Int): MangasPage {
-        val url = if (page == 1) "$baseUrl/doc-truyen" else "$baseUrl/truyen-yeu-thich/trang-$page"
-        val selector = if (page == 1) "#div_suggest ul.grid > li" else MANGA_LIST_SELECTOR
+        val url = "$baseUrl/truyen-yeu-thich" + if (page > 1) "/trang-$page" else ""
 
-        return parseMangaPage(fetchDocument(url, selector), selector)
+        return parseMangaPage(fetchDocument(url, MANGA_LIST_SELECTOR))
     }
 
     // =============================== Latest ===============================
 
     override suspend fun getLatestUpdates(page: Int): MangasPage {
-        val url = if (page == 1) "$baseUrl/doc-truyen" else "$baseUrl/truyen-moi-cap-nhat/trang-$page"
-        val selector = if (page == 1) "#main_homepage .list_grid_out ul.grid > li" else MANGA_LIST_SELECTOR
+        val url = "$baseUrl/truyen-moi-cap-nhat" + if (page > 1) "/trang-$page" else ""
 
-        return parseMangaPage(fetchDocument(url, selector), selector)
+        return parseMangaPage(fetchDocument(url, MANGA_LIST_SELECTOR))
     }
 
     // =============================== Search ===============================
@@ -192,7 +190,7 @@ abstract class TruyenQQ : KeiSource() {
         return runWebView(timeout = 45.seconds) {
             userAgent = this@TruyenQQ.headers["User-Agent"] ?: userAgent
             blockImages = true
-            poll(500.milliseconds) {
+            poll(100.milliseconds) {
                 evaluateJs("document.documentElement.outerHTML") { result ->
                     val html = runCatching { result.parseAs<String>() }.getOrNull()
                     if (html != null) {
