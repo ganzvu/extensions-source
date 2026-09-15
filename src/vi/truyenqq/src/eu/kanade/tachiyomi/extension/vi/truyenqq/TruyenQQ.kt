@@ -39,17 +39,19 @@ abstract class TruyenQQ : KeiSource() {
     // ============================== Popular ===============================
 
     override suspend fun getPopularManga(page: Int): MangasPage {
-        val url = "$baseUrl/truyen-yeu-thich" + if (page > 1) "/trang-$page" else ""
+        val url = if (page == 1) "$baseUrl/doc-truyen" else "$baseUrl/truyen-yeu-thich/trang-$page"
+        val selector = if (page == 1) "#div_suggest ul.grid > li" else MANGA_LIST_SELECTOR
 
-        return parseMangaPage(client.get(url))
+        return parseMangaPage(client.get(url), selector)
     }
 
     // =============================== Latest ===============================
 
     override suspend fun getLatestUpdates(page: Int): MangasPage {
-        val url = "$baseUrl/truyen-moi-cap-nhat" + if (page > 1) "/trang-$page" else ""
+        val url = if (page == 1) "$baseUrl/doc-truyen" else "$baseUrl/truyen-moi-cap-nhat/trang-$page"
+        val selector = if (page == 1) "#main_homepage .list_grid_out ul.grid > li" else MANGA_LIST_SELECTOR
 
-        return parseMangaPage(client.get(url))
+        return parseMangaPage(client.get(url), selector)
     }
 
     // =============================== Search ===============================
@@ -91,11 +93,12 @@ abstract class TruyenQQ : KeiSource() {
         return parseMangaPage(client.get(url))
     }
 
-    private fun parseMangaPage(response: Response): MangasPage {
+    private fun parseMangaPage(response: Response, selector: String = MANGA_LIST_SELECTOR): MangasPage {
         val document = response.asJsoup()
-        val manga = document.select("ul.grid > li").map { element ->
+        val manga = document.select(selector).mapNotNull { element ->
+            val anchor = element.selectFirst(".book_info .qtip a, .book_info .book_name a")
+                ?: return@mapNotNull null
             SManga.create().apply {
-                val anchor = element.selectFirst(".book_info .qtip a")!!
                 setUrlWithoutDomain(anchor.attr("href"))
                 title = anchor.text()
                 thumbnail_url = element.selectFirst(".book_avatar img")?.absUrl("src")
@@ -205,4 +208,8 @@ abstract class TruyenQQ : KeiSource() {
 
     private val mangaSlugRegex = Regex(""".+-\d+""")
     private val chapterSlugRegex = Regex("""(.+-\d+)-chap-.+""")
+
+    private companion object {
+        const val MANGA_LIST_SELECTOR = "ul.grid > li"
+    }
 }
