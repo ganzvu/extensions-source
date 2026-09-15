@@ -32,6 +32,8 @@ abstract class TruyenQQ : KeiSource() {
         rateLimit(1, 2.seconds) { it.host == baseUrl.toHttpUrl().host }
     }
 
+    override fun getHomeUrl(): String = "$baseUrl/doc-truyen"
+
     private val dateFormat = DateTimeFormatter.ofPattern("dd/MM/yyyy", Locale.ROOT)
 
     // ============================== Popular ===============================
@@ -163,6 +165,12 @@ abstract class TruyenQQ : KeiSource() {
             date_upload = dateFormat.tryParse(element.select(".time-chap").text())
         }
     }
+
+    override fun getMangaUrl(manga: SManga): String = baseUrl + manga.url.currentPath()
+
+    override fun getChapterUrl(chapter: SChapter): String = baseUrl + chapter.url.currentPath()
+
+    private fun String.currentPath() = replaceFirst("/doc-truyen/", "/truyen-tranh/")
 
     private fun DateTimeFormatter.tryParse(date: String): Long = runCatching {
         LocalDate.parse(date, this)
