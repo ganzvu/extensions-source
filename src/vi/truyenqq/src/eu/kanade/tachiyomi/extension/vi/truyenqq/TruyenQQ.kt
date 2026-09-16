@@ -40,7 +40,9 @@ abstract class TruyenQQ : KeiSource() {
 
     override fun Headers.Builder.configureHeaders() = removeAll("Origin")
 
-    override fun getHomeUrl(): String = "$baseUrl/doc-truyen"
+    // /doc-truyen redirects to a directory URL. The site's relative manga links then resolve as
+    // /doc-truyen/truyen-tranh/... in Android WebView, so use this non-directory listing instead.
+    override fun getHomeUrl(): String = "$baseUrl/truyen-moi-cap-nhat"
 
     private val dateFormat = DateTimeFormatter.ofPattern("dd/MM/yyyy", Locale.ROOT)
 
