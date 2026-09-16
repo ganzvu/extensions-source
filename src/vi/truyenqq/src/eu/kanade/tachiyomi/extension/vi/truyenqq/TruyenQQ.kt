@@ -12,6 +12,8 @@ import keiyoushi.network.get
 import keiyoushi.network.rateLimit
 import keiyoushi.source.KeiSource
 import keiyoushi.utils.asJsoup
+import keiyoushi.utils.parseAs
+import keiyoushi.utils.runWebView
 import kotlinx.serialization.json.JsonElement
 import okhttp3.CacheControl
 import okhttp3.Headers
@@ -24,6 +26,7 @@ import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 @Source
@@ -176,42 +179,30 @@ abstract class TruyenQQ : KeiSource() {
     private fun String.currentPath() = replaceFirst("/doc-truyen/", "/truyen-tranh/")
 
     private suspend fun fetchDocument(url: String, expectedSelector: String): Document {
-        val response = runCatching {
-            client.get(
-                url,
-                cacheControl = CacheControl.FORCE_NETWORK,
-                ensureSuccess = false,
-            )
-        }.getOrElse { error ->
-            throw Exception(
-                "TruyenQQ diagnostic: request failed for $url; " +
-                    "${error::class.simpleName}: ${error.message}",
-                error,
-            )
-        }
-
-        if (!response.isSuccessful) {
-            val chain = generateSequence(response) { it.priorResponse }
-                .toList()
-                .asReversed()
-                .joinToString(" -> ") { "${it.code} ${it.request.url}" }
-            val title = Jsoup.parse(response.peekBody(64 * 1024).string()).title()
-                .ifBlank { "<none>" }
-            val diagnostic = "TruyenQQ diagnostic: HTTP ${response.code}; " +
-                "final=${response.request.url}; chain=$chain; " +
-                "cf=${response.header("cf-mitigated") ?: "<none>"}; " +
-                "server=${response.header("server") ?: "<none>"}; title=$title"
-            response.close()
-            throw Exception(diagnostic)
-        }
-
-        val document = response.asJsoup()
-        if (document.selectFirst(expectedSelector) != null) return document
-
-        throw Exception(
-            "TruyenQQ diagnostic: HTTP 200 but selector '$expectedSelector' is missing; " +
-                "final=${document.location()}; title=${document.title()}",
+        val response = client.get(
+            url,
+            cacheControl = CacheControl.FORCE_NETWORK,
+            ensureSuccess = false,
         )
+        val document = response.use { if (it.isSuccessful) it.asJsoup() else null }
+        if (document?.selectFirst(expectedSelector) != null) return document
+
+        return runWebView(timeout = 45.seconds) {
+            userAgent = this@TruyenQQ.headers["User-Agent"] ?: userAgent
+            blockImages = true
+            poll(100.milliseconds) {
+                evaluateJs("document.documentElement.outerHTML") { result ->
+                    val html = runCatching { result.parseAs<String>() }.getOrNull()
+                    if (html != null) {
+                        val webViewDocument = Jsoup.parse(html, url)
+                        if (webViewDocument.selectFirst(expectedSelector) != null) {
+                            resolve(webViewDocument)
+                        }
+                    }
+                }
+            }
+            loadUrl(url)
+        }
     }
 
     private fun DateTimeFormatter.tryParse(date: String): Long = runCatching {
