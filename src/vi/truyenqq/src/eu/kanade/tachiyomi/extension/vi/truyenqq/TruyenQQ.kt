@@ -19,6 +19,7 @@ import okhttp3.CacheControl
 import okhttp3.Headers
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
@@ -26,6 +27,7 @@ import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
@@ -102,7 +104,7 @@ abstract class TruyenQQ : KeiSource() {
             val anchor = element.selectFirst(".book_info .qtip a, .book_info .book_name a")
                 ?: return@mapNotNull null
             SManga.create().apply {
-                setUrlWithoutDomain(anchor.attr("href"))
+                setUrlWithoutDomain(anchor.attr("href").rootPath())
                 title = anchor.text()
                 thumbnail_url = element.selectFirst(".book_avatar img")?.absUrl("src")
             }
@@ -166,7 +168,7 @@ abstract class TruyenQQ : KeiSource() {
 
     private fun parseChapterList(document: Document): List<SChapter> = document.select("div.works-chapter-list div.works-chapter-item").map { element ->
         SChapter.create().apply {
-            setUrlWithoutDomain(element.selectFirst("a")!!.attr("href"))
+            setUrlWithoutDomain(element.selectFirst("a")!!.attr("href").rootPath())
             name = element.select("a").text().trim()
             date_upload = dateFormat.tryParse(element.select(".time-chap").text())
         }
@@ -176,16 +178,35 @@ abstract class TruyenQQ : KeiSource() {
 
     override fun getChapterUrl(chapter: SChapter): String = baseUrl + chapter.url.currentPath()
 
-    private fun String.currentPath() = replaceFirst("/doc-truyen/", "/truyen-tranh/")
+    private fun String.rootPath(): String {
+        val path = toHttpUrlOrNull()?.encodedPath
+            ?: substringBefore('?').substringBefore('#')
+        return "/${path.trimStart('/')}".currentPath()
+    }
+
+    private fun String.currentPath() = replaceFirst(
+        Regex("^/doc-truyen/(?:truyen-tranh/)?"),
+        "/truyen-tranh/",
+    )
 
     private suspend fun fetchDocument(url: String, expectedSelector: String): Document {
+        documentCache[url]
+            ?.takeIf { System.currentTimeMillis() - it.savedAt < DOCUMENT_CACHE_TTL }
+            ?.document
+            ?.clone()
+            ?.takeIf { it.selectFirst(expectedSelector) != null }
+            ?.let { return it }
+
         val response = client.get(
             url,
             cacheControl = CacheControl.FORCE_NETWORK,
             ensureSuccess = false,
         )
         val document = response.use { if (it.isSuccessful) it.asJsoup() else null }
-        if (document?.selectFirst(expectedSelector) != null) return document
+        if (document?.selectFirst(expectedSelector) != null) {
+            cacheDocument(url, document)
+            return document
+        }
 
         return runWebView(timeout = 45.seconds) {
             userAgent = this@TruyenQQ.headers["User-Agent"] ?: userAgent
@@ -196,6 +217,7 @@ abstract class TruyenQQ : KeiSource() {
                     if (html != null) {
                         val webViewDocument = Jsoup.parse(html, url)
                         if (webViewDocument.selectFirst(expectedSelector) != null) {
+                            cacheDocument(url, webViewDocument)
                             resolve(webViewDocument)
                         }
                     }
@@ -203,6 +225,11 @@ abstract class TruyenQQ : KeiSource() {
             }
             loadUrl(url)
         }
+    }
+
+    private fun cacheDocument(url: String, document: Document) {
+        if (documentCache.size >= DOCUMENT_CACHE_SIZE) documentCache.clear()
+        documentCache[url] = CachedDocument(System.currentTimeMillis(), document.clone())
     }
 
     private fun DateTimeFormatter.tryParse(date: String): Long = runCatching {
@@ -236,5 +263,14 @@ abstract class TruyenQQ : KeiSource() {
 
     private companion object {
         const val MANGA_LIST_SELECTOR = "ul.grid > li"
+        const val DOCUMENT_CACHE_TTL = 5 * 60 * 1000L
+        const val DOCUMENT_CACHE_SIZE = 20
+
+        val documentCache = ConcurrentHashMap<String, CachedDocument>()
     }
+
+    private data class CachedDocument(
+        val savedAt: Long,
+        val document: Document,
+    )
 }
