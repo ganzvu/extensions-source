@@ -6,7 +6,7 @@ plugins {
 
 keiyoushi {
     name = "TruyenQQ"
-    versionCode = 32
+    versionCode = 33
     contentWarning = ContentWarning.SAFE
     libVersion = "1.6"
 
@@ -19,5 +19,6 @@ keiyoushi {
 
     deeplink {
         path("/truyen-tranh/..*")
+        path("/doc-truyen/..*")
     }
 }

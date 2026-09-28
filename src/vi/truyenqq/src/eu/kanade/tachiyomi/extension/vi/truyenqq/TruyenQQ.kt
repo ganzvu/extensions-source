@@ -19,7 +19,6 @@ import okhttp3.CacheControl
 import okhttp3.Headers
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
-import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
@@ -34,22 +33,23 @@ import kotlin.time.Duration.Companion.seconds
 @Source
 abstract class TruyenQQ : KeiSource() {
 
+    private val siteUrl: String get() = baseUrl.truyenQQOrigin()
+
     override fun OkHttpClient.Builder.configureClient() = apply {
         rateLimit(1, 2.seconds) { it.host == baseUrl.toHttpUrl().host }
     }
 
     override fun Headers.Builder.configureHeaders() = removeAll("Origin")
+        .set("Referer", "$siteUrl/")
 
-    // /doc-truyen redirects to a directory URL. The site's relative manga links then resolve as
-    // /doc-truyen/truyen-tranh/... in Android WebView, so use this non-directory listing instead.
-    override fun getHomeUrl(): String = "$baseUrl/truyen-moi-cap-nhat"
+    override fun getHomeUrl(): String = "$siteUrl/truyen-moi-cap-nhat"
 
     private val dateFormat = DateTimeFormatter.ofPattern("dd/MM/yyyy", Locale.ROOT)
 
     // ============================== Popular ===============================
 
     override suspend fun getPopularManga(page: Int): MangasPage {
-        val url = "$baseUrl/truyen-yeu-thich" + if (page > 1) "/trang-$page" else ""
+        val url = "$siteUrl/truyen-yeu-thich" + if (page > 1) "/trang-$page" else ""
 
         return parseMangaPage(fetchDocument(url, MANGA_LIST_SELECTOR))
     }
@@ -57,7 +57,7 @@ abstract class TruyenQQ : KeiSource() {
     // =============================== Latest ===============================
 
     override suspend fun getLatestUpdates(page: Int): MangasPage {
-        val url = "$baseUrl/truyen-moi-cap-nhat" + if (page > 1) "/trang-$page" else ""
+        val url = "$siteUrl/truyen-moi-cap-nhat" + if (page > 1) "/trang-$page" else ""
 
         return parseMangaPage(fetchDocument(url, MANGA_LIST_SELECTOR))
     }
@@ -66,7 +66,7 @@ abstract class TruyenQQ : KeiSource() {
 
     override suspend fun getSearchMangaList(page: Int, query: String, filters: FilterList): MangasPage {
         val endpoint = if (query.isNotBlank()) "tim-kiem" else "tim-kiem-nang-cao"
-        val url = ("$baseUrl/$endpoint" + if (page > 1) "/trang-$page" else "").toHttpUrl().newBuilder().apply {
+        val url = ("$siteUrl/$endpoint" + if (page > 1) "/trang-$page" else "").toHttpUrl().newBuilder().apply {
             if (query.isNotBlank()) {
                 addQueryParameter("q", query)
             } else {
@@ -106,7 +106,7 @@ abstract class TruyenQQ : KeiSource() {
             val anchor = element.selectFirst(".book_info .qtip a, .book_info .book_name a")
                 ?: return@mapNotNull null
             SManga.create().apply {
-                setUrlWithoutDomain(anchor.attr("href").rootPath())
+                setUrlWithoutDomain(anchor.attr("href").truyenQQPath())
                 title = anchor.text()
                 thumbnail_url = element.selectFirst(".book_avatar img")?.absUrl("src")
             }
@@ -116,15 +116,15 @@ abstract class TruyenQQ : KeiSource() {
     }
 
     override suspend fun getMangaByUrl(url: HttpUrl): SManga? {
-        if (url.host != baseUrl.toHttpUrl().host || url.pathSegments.firstOrNull() != "truyen-tranh") return null
+        if (url.host != baseUrl.toHttpUrl().host || url.pathSegments.firstOrNull() !in listOf("truyen-tranh", "doc-truyen")) return null
 
-        val slug = url.pathSegments.getOrNull(1)?.takeIf { url.pathSegments.size == 2 } ?: return null
+        val slug = url.toString().truyenQQPath().substringAfterLast('/')
         val mangaSlug = chapterSlugRegex.matchEntire(slug)?.groupValues?.get(1)
             ?: slug.takeIf { mangaSlugRegex.matches(it) }
             ?: return null
         val mangaPath = "/truyen-tranh/$mangaSlug"
 
-        return parseMangaDetails(fetchDocument("$baseUrl$mangaPath", ".list-info")).apply {
+        return parseMangaDetails(fetchDocument("$siteUrl$mangaPath", ".list-info")).apply {
             setUrlWithoutDomain(mangaPath)
         }
     }
@@ -170,26 +170,15 @@ abstract class TruyenQQ : KeiSource() {
 
     private fun parseChapterList(document: Document): List<SChapter> = document.select("div.works-chapter-list div.works-chapter-item").map { element ->
         SChapter.create().apply {
-            setUrlWithoutDomain(element.selectFirst("a")!!.attr("href").rootPath())
+            setUrlWithoutDomain(element.selectFirst("a")!!.attr("href").truyenQQPath())
             name = element.select("a").text().trim()
             date_upload = dateFormat.tryParse(element.select(".time-chap").text())
         }
     }
 
-    override fun getMangaUrl(manga: SManga): String = baseUrl + manga.url.currentPath()
+    override fun getMangaUrl(manga: SManga): String = siteUrl + manga.url.truyenQQPath()
 
-    override fun getChapterUrl(chapter: SChapter): String = baseUrl + chapter.url.currentPath()
-
-    private fun String.rootPath(): String {
-        val path = toHttpUrlOrNull()?.encodedPath
-            ?: substringBefore('?').substringBefore('#')
-        return "/${path.trimStart('/')}".currentPath()
-    }
-
-    private fun String.currentPath() = replaceFirst(
-        Regex("^/doc-truyen/(?:truyen-tranh/)?"),
-        "/truyen-tranh/",
-    )
+    override fun getChapterUrl(chapter: SChapter): String = siteUrl + chapter.url.truyenQQPath()
 
     private suspend fun fetchDocument(url: String, expectedSelector: String): Document {
         documentCache[url]
